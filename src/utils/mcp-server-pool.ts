@@ -27,6 +27,7 @@ interface PluginWithSettings {
     // From ObsidianAPIPluginRef (for ObsidianAPI)
     validation?: Partial<import('../validation/input-validator').ValidationConfig>;
     httpPort?: number;
+    toolVisibility?: Record<string, boolean>;
   };
   ignoreManager?: import('../security/mcp-ignore-manager').MCPIgnoreManager;
   mcpServer?: { isServerRunning(): boolean; getConnectionCount(): number };
@@ -137,8 +138,11 @@ export class MCPServerPool extends EventEmitter {
       Debug.log(`⚠️ Created regular session API for session ${sessionId} (no security)`);
     }
 
-    // Get available tools
-    const availableTools = createSemanticTools(this.obsidianAPI);
+    // Get available tools (filtered by visibility settings)
+    const availableTools = createSemanticTools(
+      this.obsidianAPI,
+      this.plugin?.settings?.toolVisibility
+    );
 
     // List tools handler
     server.setRequestHandler(ListToolsRequestSchema, () => {

@@ -7,6 +7,7 @@ import { randomBytes } from 'crypto';
 import { PluginDetector } from './utils/plugin-detector';
 import { CertificateConfig } from './utils/certificate-manager';
 import { ValidationConfig } from './validation/input-validator';
+import { ALL_OPERATIONS, getActionsForOperation, getOperationDescription } from './tools/semantic-tools';
 
 interface MCPPluginSettings {
 	httpEnabled: boolean;
@@ -23,6 +24,7 @@ interface MCPPluginSettings {
 	pathExclusionsEnabled: boolean;
 	enableIgnoreContextMenu: boolean;
 	validation?: Partial<ValidationConfig>;
+	toolVisibility: Record<string, boolean>;
 }
 
 interface MCPServerInfo {
@@ -71,7 +73,8 @@ const DEFAULT_SETTINGS: MCPPluginSettings = {
 		maxPathLength: 255,
 		maxRegexComplexity: 100,
 		strictMode: false
-	}
+	},
+	toolVisibility: {} // Empty = all tools enabled (missing keys default to true)
 };
 
 export default class ObsidianMCPPlugin extends Plugin {
@@ -555,9 +558,12 @@ class MCPSettingTab extends PluginSettingTab {
 		// Security Section
 		this.createSecuritySection(containerEl);
 		
+		// Tool Visibility Section
+		this.createToolVisibilitySection(containerEl);
+
 		// UI Options Section
 		this.createUIOptionsSection(containerEl);
-		
+
 		// Protocol Information Section (always show)
 		this.createProtocolInfoSection(containerEl);
 	}
@@ -1199,6 +1205,118 @@ class MCPSettingTab extends PluginSettingTab {
 		}
 	}
 
+	private createToolVisibilitySection(containerEl: HTMLElement): void {
+		new Setting(containerEl).setName("Tool visibility").setHeading();
+
+		containerEl.createEl('p', {
+			text: 'Control which mcp tools are visible to connecting agents. Disabled tools are hidden from the tool list — agents cannot discover or call them. Changes take effect on the next agent connection.',
+			cls: 'setting-item-description mcp-tool-tree-desc'
+		});
+
+		const visibility = this.plugin.settings.toolVisibility;
+
+		const isActionEnabled = (op: string, action: string): boolean => {
+			const key = `${op}.${action}`;
+			return visibility[key] !== false;
+		};
+
+		const isOperationFullyEnabled = (op: string): boolean => {
+			if (visibility[op] === false) return false;
+			return getActionsForOperation(op).every(a => isActionEnabled(op, a));
+		};
+
+		const isOperationFullyDisabled = (op: string): boolean => {
+			if (visibility[op] === false) return true;
+			return getActionsForOperation(op).every(a => !isActionEnabled(op, a));
+		};
+
+		const treeEl = containerEl.createDiv({ cls: 'mcp-tool-tree' });
+
+		for (const operation of ALL_OPERATIONS) {
+			const actions = getActionsForOperation(operation);
+			if (actions.length === 0) continue;
+
+			// Skip dataview if not available
+			if (operation === 'dataview') {
+				const detector = new PluginDetector(this.app);
+				if (!detector.isPluginEnabled('dataview')) continue;
+			}
+
+			const enabledCount = actions.filter(a => isActionEnabled(operation, a)).length;
+			const allEnabled = isOperationFullyEnabled(operation);
+			const allDisabled = isOperationFullyDisabled(operation);
+
+			// Collapse container for children
+			const groupEl = treeEl.createDiv();
+			const childrenEl = groupEl.createDiv();
+			if (allDisabled) childrenEl.addClass('mcp-hidden');
+
+			// Parent toggle
+			const desc = getOperationDescription(operation).replace(/^[^\s]+\s/, ''); // strip leading emoji
+			new Setting(groupEl)
+				.setClass('mcp-tool-parent')
+				.setName(`${operation} (${enabledCount}/${actions.length})`)
+				.setDesc(desc)
+				.addToggle(toggle => {
+					// Set initial state
+					if (!allEnabled && !allDisabled) {
+						// Indeterminate: mixed state
+						toggle.setValue(true);
+						const checkboxEl = (toggle as unknown as { toggleEl: HTMLElement }).toggleEl;
+						if (checkboxEl) checkboxEl.classList.add('is-indeterminate');
+					} else {
+						toggle.setValue(!allDisabled);
+					}
+
+					toggle.onChange(async (value) => {
+						// Cascade to all children
+						visibility[operation] = value;
+						for (const action of actions) {
+							visibility[`${operation}.${action}`] = value;
+						}
+						await this.plugin.saveSettings();
+						this.display(); // Re-render for updated states
+					});
+				});
+
+			// Move parent toggle before children container
+			groupEl.insertBefore(groupEl.lastElementChild!, childrenEl);
+
+			// Child toggles
+			for (const action of actions) {
+				new Setting(childrenEl)
+					.setClass('mcp-tool-child')
+					.setName(action)
+					.addToggle(toggle => toggle
+						.setValue(isActionEnabled(operation, action))
+						.onChange(async (value) => {
+							visibility[`${operation}.${action}`] = value;
+
+							// Update operation-level key based on aggregate
+							const allNowEnabled = actions.every(a => {
+								const k = `${operation}.${a}`;
+								return a === action ? value : visibility[k] !== false;
+							});
+							const allNowDisabled = actions.every(a => {
+								const k = `${operation}.${a}`;
+								return a === action ? !value : visibility[k] === false;
+							});
+
+							if (allNowEnabled) {
+								delete visibility[operation];
+							} else if (allNowDisabled) {
+								visibility[operation] = false;
+							} else {
+								delete visibility[operation]; // mixed = not explicitly false
+							}
+
+							await this.plugin.saveSettings();
+							this.display(); // Re-render for parent state update
+						}));
+			}
+		}
+	}
+
 	private createUIOptionsSection(containerEl: HTMLElement): void {
 		new Setting(containerEl).setName("Interface").setHeading();
 
@@ -1239,30 +1357,40 @@ class MCPSettingTab extends PluginSettingTab {
 			});
 		}
 		
-		// Dynamic tools list based on plugin availability
-		const baseToolsList = [
-			'🗂️ vault - File and folder operations with fragment support',
-			'✏️ edit - Smart editing with content buffers', 
-			'👁️ view - Content viewing and navigation',
-			'🔄 workflow - AI workflow guidance and suggestions',
-			'🕸️ graph - Graph traversal and link analysis',
-			'⚙️ system - System operations and web fetch'
-		];
-		
-		// Check for optional plugin integrations
+		// Dynamic tools list based on plugin availability and visibility
+		const visibility = this.plugin.settings.toolVisibility;
 		const detector = new PluginDetector(this.app);
 		const isDataviewAvailable = detector.isDataviewAPIReady();
-		
-		const toolsList = [...baseToolsList];
-		if (isDataviewAvailable) {
-			toolsList.push('📊 dataview - Query vault data with DQL (Dataview plugin detected)');
-		}
-		
+
+		const toolEntries: { name: string; emoji: string; desc: string; available: boolean }[] = [
+			{ name: 'vault', emoji: '🗂️', desc: 'File and folder operations with fragment support', available: true },
+			{ name: 'edit', emoji: '✏️', desc: 'Smart editing with content buffers', available: true },
+			{ name: 'view', emoji: '👁️', desc: 'Content viewing and navigation', available: true },
+			{ name: 'workflow', emoji: '🔄', desc: 'AI workflow guidance and suggestions', available: true },
+			{ name: 'graph', emoji: '🕸️', desc: 'Graph traversal and link analysis', available: true },
+			{ name: 'system', emoji: '⚙️', desc: 'System operations and web fetch', available: true },
+			{ name: 'bases', emoji: '🗃️', desc: 'Bases query and management', available: true },
+			{ name: 'dataview', emoji: '📊', desc: 'Query vault data with DQL', available: isDataviewAvailable },
+		];
+
 		new Setting(info).setName("").setHeading();
 		const toolsListEl = info.createEl('ul');
-		toolsList.forEach(tool => {
-			toolsListEl.createEl('li', {text: tool});
-		});
+		for (const entry of toolEntries) {
+			if (!entry.available) continue;
+			const actions = getActionsForOperation(entry.name);
+			const enabledActions = actions.filter(a => visibility[`${entry.name}.${a}`] !== false);
+			const isDisabled = visibility[entry.name] === false || enabledActions.length === 0;
+
+			const li = toolsListEl.createEl('li', {
+				text: `${entry.emoji} ${entry.name} - ${entry.desc}`,
+			});
+			if (isDisabled) {
+				li.addClass('mcp-tool-disabled');
+				li.createSpan({ text: ' (hidden)', cls: 'mcp-tool-count' });
+			} else if (enabledActions.length < actions.length) {
+				li.createSpan({ text: ` (${enabledActions.length}/${actions.length} actions)`, cls: 'mcp-tool-count' });
+			}
+		}
 		
 		// Add plugin integration status
 		if (isDataviewAvailable) {
