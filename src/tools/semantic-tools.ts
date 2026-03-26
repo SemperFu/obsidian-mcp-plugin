@@ -57,6 +57,9 @@ export interface SemanticTool {
   handler: (api: ObsidianAPI, args: unknown) => Promise<MCPToolResult>;
 }
 
+/** Tool visibility map — keys are "operation" or "operation.action", values are enabled/disabled */
+export type ToolVisibility = Record<string, boolean>;
+
 /** Plugin interface for checking read-only mode */
 interface PluginWithSettings {
   settings?: {
@@ -84,7 +87,18 @@ interface DataviewResult {
  * Unified semantic tools that consolidate all operations into 5 main verbs
  */
 
-const createSemanticTool = (operation: string): SemanticTool => ({
+const createSemanticTool = (operation: string, visibility?: ToolVisibility): SemanticTool | null => {
+  // Check operation-level toggle
+  if (visibility && visibility[operation] === false) return null;
+
+  // Filter actions based on visibility
+  let actions = getActionsForOperation(operation);
+  if (visibility) {
+    actions = actions.filter(action => visibility[`${operation}.${action}`] !== false);
+    if (actions.length === 0) return null;
+  }
+
+  return {
   name: operation,
   description: getOperationDescription(operation),
   inputSchema: {
@@ -93,7 +107,7 @@ const createSemanticTool = (operation: string): SemanticTool => ({
       action: {
         type: 'string',
         description: 'The specific action to perform',
-        enum: getActionsForOperation(operation)
+        enum: actions
       },
       raw: {
         type: 'boolean',
@@ -107,6 +121,21 @@ const createSemanticTool = (operation: string): SemanticTool => ({
   handler: async (api: ObsidianAPI, rawArgs: unknown): Promise<MCPToolResult> => {
     const args = (rawArgs ?? {}) as ToolArgs;
     const app = api.getApp();
+
+    // Defense in depth: block actions disabled by visibility even if tool is enumerated
+    if (visibility && visibility[`${operation}.${args.action}`] === false) {
+      return {
+        content: [{
+          type: 'text' as const,
+          text: JSON.stringify({
+            error: {
+              code: 'ACTION_DISABLED',
+              message: `Action '${args.action}' is disabled in tool visibility settings`
+            }
+          }, null, 2)
+        }]
+      };
+    }
 
     // Check for read-only mode before processing write operations
     const plugin = (api as unknown as { plugin?: PluginWithSettings }).plugin;
@@ -322,9 +351,10 @@ const createSemanticTool = (operation: string): SemanticTool => ({
       };
     }
   }
-});
+  };
+};
 
-function getOperationDescription(operation: string): string {
+export function getOperationDescription(operation: string): string {
   const descriptions: Record<string, string> = {
     vault: '📁 File operations - list, read, create, update, delete, search, fragments, move, rename, copy, split, combine, concatenate. Search supports: operators (file:, path:, content:, tag:), OR/AND, "quoted phrases", /regex/. Options: ranked=true for TF-IDF relevance scoring, searchStrategy (filename|content|combined|auto), includeSnippets for contextual extracts.',
     edit: '✏️ Edit files - window: find/replace with fuzzy matching, append: add to end, patch: modify headings/blocks/frontmatter, at_line: insert at line number, from_buffer: reuse previous window content',
@@ -338,7 +368,7 @@ function getOperationDescription(operation: string): string {
   return descriptions[operation] || 'Unknown operation';
 }
 
-function getActionsForOperation(operation: string): string[] {
+export function getActionsForOperation(operation: string): string[] {
   const actions: Record<string, string[]> = {
     vault: ['list', 'read', 'create', 'update', 'delete', 'search', 'fragments', 'move', 'rename', 'copy', 'split', 'combine', 'concatenate'],
     edit: ['window', 'append', 'patch', 'at_line', 'from_buffer'],
@@ -741,26 +771,24 @@ function getParametersForOperation(operation: string): Record<string, unknown> {
 /**
  * Create semantic tools array with optional Dataview support
  */
-export function createSemanticTools(api?: ObsidianAPI): SemanticTool[] {
-  const baseTools = [
-    createSemanticTool('vault'),
-    createSemanticTool('edit'),
-    createSemanticTool('view'),
-    createSemanticTool('workflow'),
-    createSemanticTool('system'),
-    createSemanticTool('graph'),
-    createSemanticTool('bases')
-  ];
+export function createSemanticTools(api?: ObsidianAPI, visibility?: ToolVisibility): SemanticTool[] {
+  const operations = ['vault', 'edit', 'view', 'workflow', 'system', 'graph', 'bases'];
 
-  // Add Dataview tool if available
+  // Add Dataview if available
   if (api && isDataviewToolAvailable(api)) {
-    baseTools.push(createSemanticTool('dataview'));
+    operations.push('dataview');
   }
 
-  return baseTools;
+  // Create tools, filtering by visibility (null = operation fully disabled)
+  return operations
+    .map(op => createSemanticTool(op, visibility))
+    .filter((tool): tool is SemanticTool => tool !== null);
 }
 
-// Export the base 6 semantic tools (for backward compatibility)
+/** All operation group names (for UI enumeration) */
+export const ALL_OPERATIONS = ['vault', 'edit', 'view', 'workflow', 'system', 'graph', 'bases', 'dataview'] as const;
+
+// Export the base semantic tools (for backward compatibility, no visibility filtering)
 export const semanticTools = [
   createSemanticTool('vault'),
   createSemanticTool('edit'),
@@ -769,4 +797,4 @@ export const semanticTools = [
   createSemanticTool('system'),
   createSemanticTool('graph'),
   createSemanticTool('bases')
-];
+].filter((tool): tool is SemanticTool => tool !== null);

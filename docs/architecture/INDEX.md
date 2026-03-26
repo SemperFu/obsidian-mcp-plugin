@@ -21,3 +21,11 @@ _Server architecture, transport, connection handling, plugin lifecycle_
 | ADR | Title | Status |
 |-----|-------|--------|
 | [ADR-100](./core/ADR-100-remove-concurrent-mode-toggle-and-simplify-connection-setup.md) | Remove concurrent mode toggle and simplify connection setup | Accepted |
+| [ADR-101](./core/ADR-101-tree-based-mcp-tool-visibility-gating.md) | Tree-based MCP tool visibility gating | Draft |
+
+## Tools & API
+_MCP tool design, semantic operations, graph operations, formatters_
+
+| ADR | Title | Status |
+|-----|-------|--------|
+| [ADR-200](./tools/ADR-200-close-cli-parity-gaps-add-daily-notes-tasks-templates-and-properties-operations.md) | Close CLI parity gaps — add daily notes, tasks, templates, and properties operations | Draft |
