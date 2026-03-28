@@ -16,7 +16,8 @@ if (!fs.existsSync(workerDistDir)) {
 
 // Compile TypeScript worker files
 try {
-  execSync(`npx tsc src/workers/*.ts --outDir dist/workers --module commonjs --target es2020 --lib es2020 --skipLibCheck --types node`, {
+  const workerFiles = fs.readdirSync(workerSrcDir).filter(f => f.endsWith('.ts')).map(f => path.join('src', 'workers', f)).join(' ');
+  execSync(`npx tsc ${workerFiles} --outDir dist/workers --module commonjs --target es2020 --lib es2020 --skipLibCheck --types node`, {
     stdio: 'inherit'
   });
   console.log('✅ Worker scripts built successfully');

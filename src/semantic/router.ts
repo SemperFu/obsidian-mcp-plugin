@@ -19,6 +19,14 @@ import { GraphSearchTool, GraphSearchParams } from '../tools/graph-search';
 import { GraphSearchTool as GraphSearchTraversalTool } from '../tools/graph-search-tool';
 import { GraphTagTool } from '../tools/graph-tag-tool';
 import { App } from 'obsidian';
+import {
+  readActiveEditorContent,
+  writeActiveEditorContent,
+  appendActiveEditorContent,
+  patchActiveEditorContent,
+  getActiveEditorInfo,
+  openFileInBackground
+} from '../utils/editor-buffer';
 import { InputValidator, ValidationException } from '../validation/input-validator';
 import { BaseYAML } from '../types/bases-yaml';
 
@@ -142,6 +150,8 @@ export class SemanticRouter {
         return this.executeEditOperation(action, params);
       case 'view':
         return this.executeViewOperation(action, params);
+      case 'editor':
+        return this.executeEditorOperation(action, params);
       case 'workflow':
         return this.executeWorkflowOperation(action, params);
       case 'system':
@@ -1491,6 +1501,70 @@ export class SemanticRouter {
     }
   }
   
+  private async executeEditorOperation(action: string, params: Params): Promise<unknown> {
+    if (!this.app) {
+      throw new Error('Editor operations require the App instance');
+    }
+
+    // For path-based operations, auto-open in background tab if not already open
+    const path = paramStr(params, 'path');
+    const background = paramBool(params, 'background') ?? true;
+    if (path && action !== 'info') {
+      const existingView = readActiveEditorContent(this.app, path);
+      if (!existingView) {
+        const opened = await openFileInBackground(this.app, path, background);
+        if (!opened) {
+          throw new Error(`File not found: ${path}`);
+        }
+        // Give plugins a moment to process the file after opening (e.g. decryption)
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+    }
+
+    switch (action) {
+      case 'read': {
+        const result = readActiveEditorContent(this.app, path);
+        if (!result) throw new Error(path 
+          ? `Could not read "${path}". The file may require a password — open it in Obsidian first to enter the password.`
+          : 'No active editor. Open a note in Obsidian first.');
+        return result;
+      }
+      case 'write': {
+        const content = paramStr(params, 'content');
+        if (!content) throw new Error('Content is required for editor.write');
+        const result = writeActiveEditorContent(this.app, content, path);
+        if (!result) throw new Error(path
+          ? `Could not write to "${path}". The file may require a password — open it in Obsidian first.`
+          : 'No active editor. Open a note in Obsidian first.');
+        return result;
+      }
+      case 'append': {
+        const content = paramStr(params, 'content');
+        if (!content) throw new Error('Content is required for editor.append');
+        const result = appendActiveEditorContent(this.app, content, path);
+        if (!result) throw new Error(path
+          ? `Could not append to "${path}". The file may require a password — open it in Obsidian first.`
+          : 'No active editor. Open a note in Obsidian first.');
+        return result;
+      }
+      case 'patch': {
+        const oldText = paramStr(params, 'oldText');
+        const newText = paramStr(params, 'newText');
+        if (!oldText || !newText) throw new Error('oldText and newText are required for editor.patch');
+        const result = patchActiveEditorContent(this.app, oldText, newText, path);
+        if (!result) throw new Error(path
+          ? `Could not patch "${path}". The file may require a password — open it in Obsidian first.`
+          : 'No active editor. Open a note in Obsidian first.');
+        return result;
+      }
+      case 'info': {
+        return getActiveEditorInfo(this.app);
+      }
+      default:
+        throw new Error(`Unknown editor action: ${action}`);
+    }
+  }
+
   private executeWorkflowOperation(action: string, _params: Params): unknown {
     switch (action) {
       case 'suggest':
