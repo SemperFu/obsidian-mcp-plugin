@@ -83,13 +83,14 @@ Your AI assistant now has these capabilities:
 
 ## Core Tools
 
-The plugin provides 8 semantic tool groups that give AI comprehensive vault access:
+The plugin provides 9 semantic tool groups that give AI comprehensive vault access:
 
 | Tool | Purpose | Key Actions |
 |------|---------|-------------|
 | **📁 vault** | File operations | list, read, create, search, move, split, combine |
 | **✏️ edit** | Content modification | window editing, append, patch sections |
 | **👁️ view** | Content display | view files, windows, active note |
+| **🔓 editor** | Editor buffer operations | read, write, append, patch active editor content (not from disk) |
 | **🕸️ graph** | Link navigation | traverse, find paths, analyze connections |
 | **💡 workflow** | Contextual hints | suggest next actions based on state |
 | **📊 dataview** | Query notes | Execute DQL queries (if installed) |
@@ -158,6 +159,50 @@ AI uses graph tools to:
 - Bases database operations
 - Web content fetching
 - Read-only mode for safety
+
+### Editor Buffer Access (Fork Addition)
+
+The `editor` tool group reads and writes content directly from Obsidian's editor buffer rather than from disk. This is useful when plugins transform content in memory (e.g. encryption plugins that keep files encrypted on disk but show decrypted content in the editor).
+
+**Actions:**
+
+| Action | Description |
+|--------|-------------|
+| `read` | Get content from the editor buffer |
+| `write` | Replace editor buffer content |
+| `append` | Append text to editor buffer |
+| `patch` | Find and replace within editor buffer |
+| `info` | Get active file metadata (path, line count, extension, encryption detection) |
+
+**Parameters:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `path` | string | (active tab) | Target a specific file. If not in a tab, auto-opens it. |
+| `background` | boolean | true | When auto-opening, keep focus on current tab. Set false to switch. |
+| `content` | string | | Text for write/append operations |
+| `oldText` | string | | Text to find (patch operation) |
+| `newText` | string | | Replacement text (patch operation) |
+
+**How it works:**
+
+1. If no `path` is given, operates on the currently active tab
+2. If `path` is given and the file is already in a tab, uses that tab's editor buffer
+3. If `path` is given and the file is NOT in a tab, auto-opens it in a background tab
+4. Short delay after opening to let other plugins process the file
+5. Reads/writes the editor buffer directly, never touching the raw file on disk
+
+**Example - reading an encrypted note:**
+
+```
+User: "What's in my health log?"
+
+AI calls: editor.read(path="Private/Health.mdenc")
+  -> File auto-opens in background tab
+  -> Encryption plugin decrypts (password cached from earlier)
+  -> AI reads decrypted content from editor buffer
+  -> User stays on their current tab, uninterrupted
+```
 
 ## Plugin Settings
 

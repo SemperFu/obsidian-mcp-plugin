@@ -359,7 +359,8 @@ export function getOperationDescription(operation: string): string {
     vault: '📁 File operations - list, read, create, update, delete, search, fragments, move, rename, copy, split, combine, concatenate. Search supports: operators (file:, path:, content:, tag:), OR/AND, "quoted phrases", /regex/. Options: ranked=true for TF-IDF relevance scoring, searchStrategy (filename|content|combined|auto), includeSnippets for contextual extracts.',
     edit: '✏️ Edit files - window: find/replace with fuzzy matching, append: add to end, patch: modify headings/blocks/frontmatter, at_line: insert at line number, from_buffer: reuse previous window content',
     view: '👁️ View content - file: entire document, window: ~20 lines around point, active: current editor file, open_in_obsidian: launch in app',
-    workflow: '💡 Get contextual suggestions for next actions based on current state',
+    editor: '🔓 Editor buffer operations - read/write the active editor content directly (not from disk). Essential for working with encrypted notes where the editor shows decrypted content but the file on disk is encrypted. All operations work on the currently active/focused note in Obsidian. If a path is provided, the file is auto-opened in a background tab if not already open.',
+    workflow:'💡 Get contextual suggestions for next actions based on current state',
     system: 'ℹ️ System operations - info: server details, commands: available actions, fetch_web: retrieve and process web content',
     graph: '🕸️ Graph navigation - traverse: explore connections, neighbors: immediate links, path: find routes between notes, statistics: link counts, backlinks/forwardlinks: directional analysis, search-traverse: connected snippets',
     dataview: '📊 Dataview operations - query: execute DQL queries (LIST FROM "folder", TABLE field FROM #tag WHERE condition), list: get pages with metadata and frontmatter, metadata: extract complete page metadata, validate: check DQL syntax, status: plugin availability. Supports LIST, TABLE, TASK, CALENDAR queries with WHERE filters, sorting, grouping.',
@@ -373,6 +374,7 @@ export function getActionsForOperation(operation: string): string[] {
     vault: ['list', 'read', 'create', 'update', 'delete', 'search', 'fragments', 'move', 'rename', 'copy', 'split', 'combine', 'concatenate'],
     edit: ['window', 'append', 'patch', 'at_line', 'from_buffer'],
     view: ['file', 'window', 'active', 'open_in_obsidian'],
+    editor: ['read', 'write', 'append', 'patch', 'info'],
     workflow: ['suggest'],
     system: ['info', 'commands', 'fetch_web'],
     graph: ['traverse', 'neighbors', 'path', 'statistics', 'backlinks', 'forwardlinks', 'search-traverse', 'advanced-traverse', 'tag-traverse', 'tag-analysis', 'shared-tags'],
@@ -590,6 +592,23 @@ function getParametersForOperation(operation: string): Record<string, unknown> {
         default: 20
       }
     },
+    editor: {
+      ...pathParam,
+      ...contentParam,
+      oldText: {
+        type: 'string',
+        description: 'Text to find for patch operation'
+      },
+      newText: {
+        type: 'string',
+        description: 'Replacement text for patch operation'
+      },
+      background: {
+        type: 'boolean',
+        description: 'When auto-opening a file, keep focus on current tab (default: true). Set false to switch to the opened file.',
+        default: true
+      }
+    },
     workflow: {
       type: {
         type: 'string',
@@ -772,7 +791,7 @@ function getParametersForOperation(operation: string): Record<string, unknown> {
  * Create semantic tools array with optional Dataview support
  */
 export function createSemanticTools(api?: ObsidianAPI, visibility?: ToolVisibility): SemanticTool[] {
-  const operations = ['vault', 'edit', 'view', 'workflow', 'system', 'graph', 'bases'];
+  const operations = ['vault', 'edit', 'view', 'editor', 'workflow', 'system', 'graph', 'bases'];
 
   // Add Dataview if available
   if (api && isDataviewToolAvailable(api)) {
@@ -786,13 +805,14 @@ export function createSemanticTools(api?: ObsidianAPI, visibility?: ToolVisibili
 }
 
 /** All operation group names (for UI enumeration) */
-export const ALL_OPERATIONS = ['vault', 'edit', 'view', 'workflow', 'system', 'graph', 'bases', 'dataview'] as const;
+export const ALL_OPERATIONS = ['vault', 'edit', 'view', 'editor', 'workflow', 'system', 'graph', 'bases', 'dataview'] as const;
 
 // Export the base semantic tools (for backward compatibility, no visibility filtering)
 export const semanticTools = [
   createSemanticTool('vault'),
   createSemanticTool('edit'),
   createSemanticTool('view'),
+  createSemanticTool('editor'),
   createSemanticTool('workflow'),
   createSemanticTool('system'),
   createSemanticTool('graph'),
